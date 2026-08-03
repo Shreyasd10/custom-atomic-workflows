@@ -1,0 +1,39 @@
+{
+  "name": "custom-atomic-workflows",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "HumanLayer-inspired RPI and PRD-Oriented workflows for Atomic.",
+  "keywords": [
+    "atomic-package",
+    "pi-package",
+    "atomic",
+    "workflows",
+    "rpi",
+    "prd"
+  ],
+  "atomic": {
+    "workflows": [
+      "./workflows/*/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@bastani/atomic": ">=0.9.0",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@bastani/atomic": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "files": [
+    "README.md",
+    "tsconfig.json",
+    "workflows/**/*.ts",
+    "workflow-skills/**/*",
+    "workflow-templates/**/*",
+    "workflow-agents/**/*.md"
+  ]
+}
