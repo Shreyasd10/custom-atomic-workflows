@@ -1,3 +1,5 @@
+[mode overridden: auto -> full, reason=instruction file requires complete content]
+
 ---
 task: eng-xxxx-description
 type: design-discussion

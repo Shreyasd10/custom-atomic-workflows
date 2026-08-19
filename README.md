@@ -25,6 +25,8 @@ After installation, inspect and run the workflows:
 /workflow rpi task="..." include_research=true
 /workflow rpi task="..." detailed_plan=true
 /workflow prd-oriented task="Design and implement the requested product change"
+/workflow prd-oriented task="..." include_research=true
+/workflow rpi task="..." iteration_context=fork
 ```
 
 ## Workflows
@@ -44,8 +46,8 @@ After installation, inspect and run the workflows:
 
 ```text
 (optional research questions → research)   # include_research=true
-→ create-prd
-→ create-technical-design
+→ create-prd (guided interview)
+→ create-technical-design (System Design gate, then Program Design)
 → approval checkpoint
 → create-structure-outline                 # Luna medium
 → approval checkpoint
@@ -69,10 +71,11 @@ Set `detailed_plan=true` on either workflow:
 | `task` | required | Task text or path |
 | `include_research` | `false` | Run research questions + research (skip for small tasks) |
 | `detailed_plan` | `false` | Use create-plan + implement-plan instead of implement-outline |
+| `iteration_context` | `fresh` | `fresh` starts each turn in a clean session. `fork` keeps the matching stage transcript as a rollback |
 
 ## Context-bounded passes
 
-Heavy stages use fresh `ctx.task` passes (`context: "fresh"`, `contextWindow: 136000` ≈ half of Luna's 272k window):
+Heavy stages use `ctx.task` passes (`context` follows `iteration_context`, default `"fresh"`, `contextWindow: 136000` ≈ half of Luna's 272k window):
 
 - **create-research** (when enabled): locate → analyze → write
 - **create-plan** (when `detailed_plan`): locate → analyze → write

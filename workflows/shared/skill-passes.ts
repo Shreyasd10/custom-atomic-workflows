@@ -29,12 +29,16 @@ const SPEED_CONTEXT_POLICY = [
 export type WorkflowOutputs = {
   status: "completed" | "blocked";
   completed_stages: string[];
+  reason?: string;
 };
+
+export type IterationContextMode = "fresh" | "fork";
 
 export type WorkflowInputs = {
   task: string;
   include_research?: boolean;
   detailed_plan?: boolean;
+  iteration_context?: IterationContextMode;
 };
 
 export type SkillPassHost = {
@@ -42,6 +46,7 @@ export type SkillPassHost = {
   task: string;
   includeResearch: boolean;
   detailedPlan: boolean;
+  iterationContext: IterationContextMode;
   completedStages: string[];
   ctx: WorkflowRunContext<WorkflowInputs, WorkflowOutputs>;
 };
@@ -54,9 +59,40 @@ export function createHost(
     task: String(ctx.inputs.task),
     includeResearch: ctx.inputs.include_research === true,
     detailedPlan: ctx.inputs.detailed_plan === true,
+    iterationContext: ctx.inputs.iteration_context === "fork" ? "fork" : "fresh",
     completedStages: [],
     ctx,
   };
+}
+
+const INTERVIEW_SKILLS = new Set(["create-prd", "create-technical-design"]);
+
+function interviewContract(skillName: string): string[] {
+  if (!INTERVIEW_SKILLS.has(skillName)) return [];
+  const lines = [
+    "INTERVIEW STAGE RULES:",
+    "- This stage is a guided conversation with the human. Do not complete the document in one turn.",
+    "- Do not invent the human's answers from research, tickets, or upstream artifacts.",
+    "- Do only the current interview step, then stop after exactly one question.",
+    "- Return to the human after each question. Do not skip ahead.",
+  ];
+  if (skillName === "create-prd") {
+    lines.push(
+      "- Keep the PRD in the template shape: a cohesive spec with takeaway headers, not a Decided-D1 log.",
+      "- Write like a product teammate: people, screens, and next steps. Human meaning first, then the machine name.",
+      "- For user-facing work, walk default, loading, validation, handoff, recovery, and rate-limit as separate questions with a dedicated mockup each.",
+      "- Do not finish until Alternative Solutions, Out of Scope, Deferred to TDD, and embedded mockups for each visual state are present.",
+    );
+  }
+  if (skillName === "create-technical-design") {
+    lines.push(
+      "- cwd is not the design boundary. Working-tree writes stay in this repo; the TDD may still design sibling repositories named by the PRD from documented architecture.",
+      "- If the PRD or ticket names a sibling client or unpublished contract, the first question must be this-repo vs end-to-end. Do not default to cwd.",
+      "- Walk scope, published contracts, real DDL, store lifecycles, fails-closed pipeline, idempotency, and client-facing contract as separate questions.",
+      "- Do not finish until System Design is approved, Program Design is filled with code-shape sketches, and both review gates have run.",
+    );
+  }
+  return lines;
 }
 
 function commonPrompt(host: SkillPassHost, skillName: string, body: string): string {
@@ -88,16 +124,20 @@ async function runPass(
     output?: string;
     schema?: TSchema;
     model?: string;
+    maxTurns?: number;
   },
 ): Promise<WorkflowTaskResult> {
   const taskOptions: WorkflowTaskOptions = {
     prompt: commonPrompt(host, opts.skillName, opts.body),
-    context: "fresh",
+    context: host.iterationContext,
     contextWindow: STAGE_CONTEXT_WINDOW,
     reads: [skillPath(opts.skillName), ...(opts.reads ?? [])],
     worktree: false,
     ...(opts.model !== undefined ? { model: opts.model } : {}),
   };
+  if (opts.maxTurns !== undefined) {
+    Object.assign(taskOptions, { maxTurns: opts.maxTurns });
+  }
   if (opts.output !== undefined) {
     Object.assign(taskOptions, {
       output: opts.output,
@@ -115,15 +155,20 @@ export async function runSkillOnce(
   skillName: string,
   stageName: string,
   instructions: string,
-  opts?: { model?: string },
+  opts?: { model?: string; interview?: boolean; maxTurns?: number },
 ): Promise<void> {
+  const interview = opts?.interview === true || INTERVIEW_SKILLS.has(skillName);
   await runPass(host, {
     name: stageName,
     skillName,
     model: opts?.model,
+    maxTurns: opts?.maxTurns,
     body: [
       instructions,
-      "Complete this phase only. Inspect artifacts already present in the current directory, write the phase artifacts required by the skill, and report the paths and validation performed.",
+      ...(interview ? interviewContract(skillName) : []),
+      interview
+        ? "Stay in this phase until the human has settled the interview and the skill's review gate is ready. Inspect artifacts already present in the current directory, write the phase artifacts required by the skill, and report the paths and validation performed."
+        : "Complete this phase only. Inspect artifacts already present in the current directory, write the phase artifacts required by the skill, and report the paths and validation performed.",
     ].join("\n\n"),
   });
   host.completedStages.push(skillName);
@@ -140,6 +185,7 @@ export async function checkpoint(
       outputs: {
         status: "blocked",
         completed_stages: host.completedStages,
+        reason: message,
       },
     });
   }
@@ -221,6 +267,7 @@ export async function runCreatePlanPasses(host: SkillPassHost): Promise<void> {
     name: "plan:locate",
     skillName: "create-plan",
     model: LUNA_MEDIUM,
+    maxTurns: 48,
     output: locatePath,
     body: [
       "Convert the approved structure outline into exact code-level implementation steps. Do not implement code yet.",
@@ -234,6 +281,7 @@ export async function runCreatePlanPasses(host: SkillPassHost): Promise<void> {
     name: "plan:analyze",
     skillName: "create-plan",
     model: LUNA_MEDIUM,
+    maxTurns: 48,
     reads: [locatePath],
     output: analyzePath,
     body: [
@@ -249,6 +297,7 @@ export async function runCreatePlanPasses(host: SkillPassHost): Promise<void> {
     name: "plan:write",
     skillName: "create-plan",
     model: LUNA_MEDIUM,
+    maxTurns: 48,
     reads: [locatePath, analyzePath],
     body: [
       "Finish create-plan.",
@@ -318,6 +367,7 @@ async function runPhasedImplementation(
     name: `${opts.stagePrefix}:bootstrap`,
     skillName: opts.skillName,
     model: LUNA_MEDIUM,
+    maxTurns: 64,
     output: ledgerPath,
     schema: phaseBootstrapSchema,
     body: [
@@ -347,6 +397,7 @@ async function runPhasedImplementation(
       name: `${opts.stagePrefix}:${phase.id}`,
       skillName: opts.skillName,
       model: LUNA_MEDIUM,
+      maxTurns: 64,
       reads: [ledger.source_path, ledgerPath],
       output: receiptPath,
       schema: implementTurnSchema,
@@ -375,6 +426,7 @@ async function runPhasedImplementation(
     name: `${opts.stagePrefix}:finalize`,
     skillName: opts.skillName,
     model: LUNA_MEDIUM,
+    maxTurns: 64,
     reads: [
       ledger.source_path,
       ledgerPath,
